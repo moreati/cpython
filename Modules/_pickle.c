@@ -7159,6 +7159,68 @@ static PyTypeObject Unpickler_Type = {
     0,                                  /*tp_is_gc*/
 };
 
+typedef struct {
+    UnpicklerObject super;
+} RestrictedUnpicklerObject;
+
+static int
+RestrictedUnpickler_init(RestrictedUnpicklerObject *self, PyObject *args, PyObject *kwds) {
+    return Unpickler_Type.tp_init((PyObject *)self, args, kwds);
+};
+
+static PyObject *
+RestrictedUnpickler_find_class(RestrictedUnpicklerObject *self, PyObject *args, PyObject *kwds) {
+    PyErr_SetString(PyExc_RuntimeError, "You didn't say the magic word");
+    return NULL;
+};
+
+static PyMethodDef RestrictedUnpickler_methods[] = {
+    {"find_class", (PyCFunction) RestrictedUnpickler_find_class, METH_VARARGS,
+     PyDoc_STR("I can't be bothered to write a docstring")},
+    {NULL},
+};
+
+static PyTypeObject RestrictedUnpickler_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_pickle.RestrictedUnpickler",          /*tp_name*/
+    sizeof(RestrictedUnpicklerObject),          /*tp_basicsize*/
+    0,                                          /*tp_itemsize*/
+    0,/*(destructor)RestrictedUnpickler_dealloc *tp_dealloc*/
+    0,                                          /*tp_print*/
+    0,                                          /*tp_getattr*/
+    0,                                          /*tp_setattr*/
+    0,                                          /*tp_reserved*/
+    0,                                          /*tp_repr*/
+    0,                                          /*tp_as_number*/
+    0,                                          /*tp_as_sequence*/
+    0,                                          /*tp_as_mapping*/
+    0,                                          /*tp_hash*/
+    0,                                          /*tp_call*/
+    0,                                          /*tp_str*/
+    0,                                          /*tp_getattro*/
+    0,                                          /*tp_setattro*/
+    0,                                          /*tp_as_buffer*/
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,   /*tp_flags*/
+    "_pickle.RestrictedUnpickler",              /*tp_doc*/
+    0,                                          /*tp_traverse*/
+    0,                                          /*tp_clear*/
+    0,                                          /*tp_richcompare*/
+    0,                                          /*tp_weaklistoffset*/
+    0,                                          /*tp_iter*/
+    0,                                          /*tp_iternext*/
+    RestrictedUnpickler_methods,                /*tp_methods*/
+    0,                                          /*tp_members*/
+    0,                                          /*tp_getset*/
+    &Unpickler_Type,                            /*tp_base*/
+    0,                                          /*tp_dict*/
+    0,                                          /*tp_descr_get*/
+    0,                                          /*tp_descr_set*/
+    0,                                          /*tp_dictoffset*/
+    (initproc) RestrictedUnpickler_init,        /*tp_init*/
+    0,                                          /*tp_alloc*/
+    0,/*RestrictedUnpickler_new,                    tp_new*/
+};
+
 /*[clinic input]
 
 _pickle.dump
@@ -7456,6 +7518,8 @@ PyInit__pickle(void)
 
     if (PyType_Ready(&Unpickler_Type) < 0)
         return NULL;
+    if (PyType_Ready(&RestrictedUnpickler_Type) < 0)
+        return NULL;
     if (PyType_Ready(&Pickler_Type) < 0)
         return NULL;
     if (PyType_Ready(&Pdata_Type) < 0)
@@ -7475,6 +7539,10 @@ PyInit__pickle(void)
         return NULL;
     Py_INCREF(&Unpickler_Type);
     if (PyModule_AddObject(m, "Unpickler", (PyObject *)&Unpickler_Type) < 0)
+        return NULL;
+    Py_INCREF(&RestrictedUnpickler_Type);
+    if (PyModule_AddObject(m, "RestrictedUnpickler",
+                           (PyObject *)&RestrictedUnpickler_Type) < 0)
         return NULL;
 
     st = _Pickle_GetState(m);
