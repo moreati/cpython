@@ -72,6 +72,20 @@ static int fuzz_builtin_unicode(const char* data, size_t size) {
     return 0;
 }
 
+static int fuzz_pickle_loads(const char* data, size_t size) {
+    PyObject* pickle_mod = PyImport_ImportModule("pickle");
+    if (s == NULL)  goto cleanup;
+
+    PyObject* obj = PyObject_CallMethod(pickle_mod, "loads", "y#", data, size);
+    if (obj == NULL && PyErr_ExceptionMatches(PyExc_Exception)) {
+        PyErr_Clear();
+    }
+    cleanup:
+    Py_XDECREF(obj);
+    Py_XDECREF(pickle_mod);
+    return 0;
+}
+
 /* Run fuzzer and abort on failure. */
 static int _run_fuzz(const uint8_t *data, size_t size, int(*fuzzer)(const char* , size_t)) {
     int rv = fuzzer((const char*) data, size);
@@ -113,6 +127,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 #endif
 #if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_builtin_unicode)
     rv |= _run_fuzz(data, size, fuzz_builtin_unicode);
+#endif
+#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_pickle_loads)
+    rv |= _run_fuzz(data, size, fuzz_pickle_loads);
 #endif
   return rv;
 }
