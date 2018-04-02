@@ -2,4 +2,4 @@ fuzz_builtin_float
 fuzz_builtin_int
 fuzz_builtin_unicode
 fuzz_pickle_loads
-fuzz_pickle_RestrictedUnpickler_loads
+fuzz_pickle_RestrictedUnpickler_load

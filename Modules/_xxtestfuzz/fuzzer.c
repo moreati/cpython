@@ -74,7 +74,7 @@ static int fuzz_builtin_unicode(const char* data, size_t size) {
 
 static int fuzz_pickle_loads(const char* data, size_t size) {
     PyObject* pickle_mod = PyImport_ImportModule("pickle");
-    if (s == NULL)  goto cleanup;
+    if (pickle_mod == NULL)  goto cleanup;
 
     PyObject* obj = PyObject_CallMethod(pickle_mod, "loads", "y#", data, size);
     if (obj == NULL && PyErr_ExceptionMatches(PyExc_Exception)) {
@@ -86,14 +86,14 @@ static int fuzz_pickle_loads(const char* data, size_t size) {
     return 0;
 }
 
-static int fuzz_pickle_RestrictedUnpickler_loads(const char* data, size_t size) {
+static int fuzz_pickle_RestrictedUnpickler_load(const char* data, size_t size) {
     PyObject* pickle_mod = PyImport_ImportModule("_pickle");
     if (pickle_mod == NULL) goto cleanup;
 
     PyObject* io_mod = PyImport_ImportModule("io");
     if (io_mod == NULL) goto cleanup;
 
-    PyObject* f = PyObject_CallMethod(io_mod, "BytesIO", "y#", data, size)
+    PyObject* f = PyObject_CallMethod(io_mod, "BytesIO", "y#", data, size);
     if (f == NULL) goto cleanup;
 
     PyObject* unpickler = PyObject_CallMethod(pickle_mod, "RestrictedUnpickler", "O", f);
@@ -157,8 +157,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 #if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_pickle_loads)
     rv |= _run_fuzz(data, size, fuzz_pickle_loads);
 #endif
-#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_pickle_RestrictedUnpickler_loads)
-    rv |= _run_fuzz(data, size, fuzz_pickle_RestrictedUnpickler_loads);
+#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_pickle_RestrictedUnpickler_load)
+    rv |= _run_fuzz(data, size, fuzz_pickle_RestrictedUnpickler_load);
 #endif
   return rv;
 }
