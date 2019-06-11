@@ -36,8 +36,6 @@ import io
 import codecs
 import _compat_pickle
 
-from _pickle import PickleBuffer
-
 __all__ = ["PickleError", "PicklingError", "UnpicklingError", "Pickler",
            "Unpickler", "dump", "dumps", "load", "loads", "PickleBuffer"]
 
@@ -395,6 +393,41 @@ def decode_long(data):
 
 
 # Pickling machinery
+
+class _PickleBuffer:
+    """Wrapper for potentially out-of-band buffers
+    """
+    #__slots__ = ("_view",)
+
+    def __init__(self, obj):
+        self._view = memoryview(obj)
+
+    def raw(self):
+        """Return a memoryview of the raw memory underlying this buffer.
+
+        Will raise BufferError is the buffer isn't contiguous.
+        """
+        # memoryview objects don't have anything like a 'released' attribute.
+        # Instead any access to the attributes of a released memoryview
+        # raises a ValueError.
+        try:
+            uncontiguous = self._view.suboffsets or not self._view.c_contiguous
+        except ValueError:
+            raise ValueError(
+                "operation forbidden on released PickleBuffer object")
+        if uncontiguous:
+            raise BufferError(
+                "cannot extract raw buffer from non-contiguous buffer")
+        return self._view.cast('B')
+
+    def release(self):
+        """Release the underlying buffer exposed by the PickleBuffer object.
+        """
+        self._view.release()
+
+    def __bytes__(self):
+        return self._view.tobytes()
+
 
 class _Pickler:
 
@@ -836,7 +869,7 @@ class _Pickler:
                 if m.readonly:
                     self.write(READONLY_BUFFER)
 
-    dispatch[PickleBuffer] = save_picklebuffer
+    dispatch[_PickleBuffer] = save_picklebuffer
 
     def save_str(self, obj):
         if self.bin:
@@ -1125,7 +1158,6 @@ class _Pickler:
 # Unpickling machinery
 
 class _Unpickler:
-
     def __init__(self, file, *, fix_imports=True,
                  encoding="ASCII", errors="strict", buffers=None):
         """This takes a binary file for reading a pickle data stream.
@@ -1756,6 +1788,7 @@ try:
         PickleError,
         PicklingError,
         UnpicklingError,
+        #PickleBuffer,
         Pickler,
         Unpickler,
         dump,
@@ -1766,6 +1799,7 @@ try:
 except ImportError:
     Pickler, Unpickler = _Pickler, _Unpickler
     dump, dumps, load, loads = _dump, _dumps, _load, _loads
+PickleBuffer = _PickleBuffer
 
 # Doctest
 def _test():
