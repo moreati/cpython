@@ -13470,6 +13470,7 @@ typedef struct {
     PyObject_HEAD
     PyObject *name;
     PyObject *path;
+    PyObject *skip;
     PyObject *stat;
     PyObject *lstat;
 #ifdef MS_WINDOWS
@@ -13491,6 +13492,7 @@ DirEntry_dealloc(DirEntry *entry)
     PyTypeObject *tp = Py_TYPE(entry);
     Py_XDECREF(entry->name);
     Py_XDECREF(entry->path);
+    Py_XDECREF(entry->skip);
     Py_XDECREF(entry->stat);
     Py_XDECREF(entry->lstat);
     freefunc free_func = PyType_GetSlot(tp, Py_tp_free);
@@ -13817,6 +13819,8 @@ static PyMemberDef DirEntry_members[] = {
      "the entry's base filename, relative to scandir() \"path\" argument"},
     {"path", T_OBJECT_EX, offsetof(DirEntry, path), READONLY,
      "the entry's full path name; equivalent to os.path.join(scandir_path, entry.name)"},
+    {"skip", T_OBJECT_EX, offsetof(DirEntry, skip), 0,
+     "whether to skip over the entry when walking a directory tree"},
     {NULL}
 };
 
@@ -13900,6 +13904,8 @@ DirEntry_from_find_data(PyObject *module, path_t *path, WIN32_FIND_DATAW *dataW)
         return NULL;
     entry->name = NULL;
     entry->path = NULL;
+    entry->skip = Py_False;
+    Py_XINCREF(Py_False;
     entry->stat = NULL;
     entry->lstat = NULL;
     entry->got_file_index = 0;
@@ -13988,6 +13994,8 @@ DirEntry_from_posix_info(PyObject *module, path_t *path, const char *name,
         return NULL;
     entry->name = NULL;
     entry->path = NULL;
+    entry->skip = Py_False;
+    Py_INCREF(Py_False);
     entry->stat = NULL;
     entry->lstat = NULL;
 
