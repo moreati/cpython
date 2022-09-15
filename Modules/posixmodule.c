@@ -911,6 +911,8 @@ _Py_Dev_Converter(PyObject *obj, void *p)
 #define DEFAULT_DIR_FD (-100)
 #endif
 
+#define GETDIRENTRIES_BUF_SIZE 8192
+
 static int
 _fd_converter(PyObject *o, int *p)
 {
@@ -4089,35 +4091,24 @@ static PyObject *
 _posix_listdir(path_t *path, PyObject *list)
 {
     PyObject *v;
-    DIR *dirp = NULL;
     struct dirent *ep;
     int return_str; /* if false, return bytes */
-#ifdef HAVE_FDOPENDIR
     int fd = -1;
-#endif
+    ssize_t bytes_read;
+    char *buf;
+    off_t basep;
+
+    buf = malloc(GETDIRENTRIES_BUF_SIZE);
+    if (buf == NULL) {
+        return NULL;
+    }
 
     errno = 0;
-#ifdef HAVE_FDOPENDIR
     if (path->fd != -1) {
-      if (HAVE_FDOPENDIR_RUNTIME) {
-        /* closedir() closes the FD, so we duplicate it */
-        fd = _Py_dup(path->fd);
-        if (fd == -1)
-            return NULL;
-
         return_str = 1;
-
-        Py_BEGIN_ALLOW_THREADS
-        dirp = fdopendir(fd);
-        Py_END_ALLOW_THREADS
-      } else {
-        PyErr_SetString(PyExc_TypeError,
-            "listdir: path should be string, bytes, os.PathLike or None, not int");
-        return NULL;
-      }
+        fd = path->fd;
     }
     else
-#endif
     {
         const char *name;
         if (path->narrow) {
@@ -4129,21 +4120,13 @@ _posix_listdir(path_t *path, PyObject *list)
             name = ".";
             return_str = 1;
         }
-
         Py_BEGIN_ALLOW_THREADS
-        dirp = opendir(name);
+        fd = open(name, O_CLOEXEC|O_DIRECTORY|O_RDONLY);
         Py_END_ALLOW_THREADS
     }
 
-    if (dirp == NULL) {
+    if (fd == -1) {
         list = path_error(path);
-#ifdef HAVE_FDOPENDIR
-        if (fd != -1) {
-            Py_BEGIN_ALLOW_THREADS
-            close(fd);
-            Py_END_ALLOW_THREADS
-        }
-#endif
         goto exit;
     }
     if ((list = PyList_New(0)) == NULL) {
@@ -4152,48 +4135,56 @@ _posix_listdir(path_t *path, PyObject *list)
     for (;;) {
         errno = 0;
         Py_BEGIN_ALLOW_THREADS
-        ep = readdir(dirp);
+        bytes_read = getdirentries(fd, buf, GETDIRENTRIES_BUF_SIZE, &basep);
         Py_END_ALLOW_THREADS
-        if (ep == NULL) {
-            if (errno == 0) {
+        if (bytes_read < 0) {
+            Py_DECREF(list);
+            list = path_error(path);
+            goto exit;
+        }
+        else if (bytes_read == 0) {
+            break;
+        }
+        for (ssize_t byte_pos = 0; byte_pos < bytes_read;) {
+            ep = (struct dirent *)(buf + byte_pos);
+            byte_pos += ep->d_reclen;
+
+            /* TODO(@moreati) Does this need to check for deleted entries?
+               > Users of getdirentries() should skip entries with d_fileno = 0,
+               > as such entries represent files which have been deleted but not
+               > yet removed from the directory entry.
+               > -- getdirentries(2) on macOS 12 */
+            if (ep->d_name[0] == '.' &&
+                (NAMLEN(ep) == 1 ||
+                (ep->d_name[1] == '.' && NAMLEN(ep) == 2)))
+                continue;
+            if (return_str)
+                v = PyUnicode_DecodeFSDefaultAndSize(ep->d_name, NAMLEN(ep));
+            else
+                v = PyBytes_FromStringAndSize(ep->d_name, NAMLEN(ep));
+            if (v == NULL) {
+                Py_CLEAR(list);
                 break;
-            } else {
-                Py_DECREF(list);
-                list = path_error(path);
-                goto exit;
             }
-        }
-        if (ep->d_name[0] == '.' &&
-            (NAMLEN(ep) == 1 ||
-             (ep->d_name[1] == '.' && NAMLEN(ep) == 2)))
-            continue;
-        if (return_str)
-            v = PyUnicode_DecodeFSDefaultAndSize(ep->d_name, NAMLEN(ep));
-        else
-            v = PyBytes_FromStringAndSize(ep->d_name, NAMLEN(ep));
-        if (v == NULL) {
-            Py_CLEAR(list);
-            break;
-        }
-        if (PyList_Append(list, v) != 0) {
+            if (PyList_Append(list, v) != 0) {
+                Py_DECREF(v);
+                Py_CLEAR(list);
+                break;
+            }
             Py_DECREF(v);
-            Py_CLEAR(list);
-            break;
         }
-        Py_DECREF(v);
     }
 
 exit:
-    if (dirp != NULL) {
-        Py_BEGIN_ALLOW_THREADS
-#ifdef HAVE_FDOPENDIR
-        if (fd > -1)
-            rewinddir(dirp);
-#endif
-        closedir(dirp);
-        Py_END_ALLOW_THREADS
+    if (path->fd != -1) {
+        basep = lseek(path->fd, 0, SEEK_SET);
     }
-
+    else if (fd != -1) {
+        close(fd);
+    }
+    if (buf) {
+        free(buf);
+    }
     return list;
 }  /* end of _posix_listdir */
 #endif  /* which OS */
@@ -4202,7 +4193,7 @@ exit:
 /*[clinic input]
 os.listdir
 
-    path : path_t(nullable=True, allow_fd='PATH_HAVE_FDOPENDIR') = None
+    path : path_t(nullable=True, allow_fd=True) = None
 
 Return a list containing the names of the files in the directory.
 
@@ -4222,7 +4213,7 @@ entries '.' and '..' even if they are present in the directory.
 
 static PyObject *
 os_listdir_impl(PyObject *module, path_t *path)
-/*[clinic end generated code: output=293045673fcd1a75 input=e3f58030f538295d]*/
+/*[clinic end generated code: output=293045673fcd1a75 input=c5d99f014b9043ae]*/
 {
     if (PySys_Audit("os.listdir", "O",
                     path->object ? path->object : Py_None) < 0) {
