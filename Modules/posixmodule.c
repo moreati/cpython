@@ -14042,11 +14042,12 @@ typedef struct {
     WIN32_FIND_DATAW file_data;
     int first_time;
 #else /* POSIX */
-    DIR *dirp;
+    off_t basep;
+    ssize_t byte_pos;
+    ssize_t bytes_read;
+    char *buf;
 #endif
-#ifdef HAVE_FDOPENDIR
     int fd;
-#endif
 } ScandirIterator;
 
 #ifdef MS_WINDOWS
@@ -14120,25 +14121,38 @@ ScandirIterator_iternext(ScandirIterator *iterator)
 static int
 ScandirIterator_is_closed(ScandirIterator *iterator)
 {
-    return !iterator->dirp;
+    return !iterator->buf;
 }
 
 static void
 ScandirIterator_closedir(ScandirIterator *iterator)
 {
-    DIR *dirp = iterator->dirp;
+    char *buf = iterator->buf;
 
-    if (!dirp)
+    if (!buf)
         return;
+    free(buf);
 
-    iterator->dirp = NULL;
-    Py_BEGIN_ALLOW_THREADS
-#ifdef HAVE_FDOPENDIR
-    if (iterator->path.fd != -1)
-        rewinddir(dirp);
-#endif
-    closedir(dirp);
-    Py_END_ALLOW_THREADS
+    iterator->buf = NULL;
+    errno = 0;
+    if (iterator->path.fd != -1) {
+        off_t ret;
+        Py_BEGIN_ALLOW_THREADS
+        ret = lseek(iterator->path.fd, 0, SEEK_SET);
+        Py_END_ALLOW_THREADS
+        if (ret < 0) {
+            path_error(&iterator->path);
+        }
+    }
+    else if (iterator->fd != -1) {
+        int ret;
+        Py_BEGIN_ALLOW_THREADS
+        ret = close(iterator->fd);
+        Py_END_ALLOW_THREADS
+        if ( ret < 0) {
+            path_error(&iterator->path);
+        }
+    }
     return;
 }
 
@@ -14151,21 +14165,27 @@ ScandirIterator_iternext(ScandirIterator *iterator)
     PyObject *entry;
 
     /* Happens if the iterator is iterated twice, or closed explicitly */
-    if (!iterator->dirp)
+    if (!iterator->buf)
         return NULL;
 
     while (1) {
-        errno = 0;
-        Py_BEGIN_ALLOW_THREADS
-        direntp = readdir(iterator->dirp);
-        Py_END_ALLOW_THREADS
+        if (iterator->byte_pos >= iterator->bytes_read) {
+            errno = 0;
+            Py_BEGIN_ALLOW_THREADS
+            iterator->bytes_read = getdirentries(iterator->fd, iterator->buf, GETDIRENTRIES_BUF_SIZE, &iterator->basep);
+            Py_END_ALLOW_THREADS
 
-        if (!direntp) {
-            /* Error or no more files */
-            if (errno != 0)
+            if (iterator->bytes_read < 0) {
                 path_error(&iterator->path);
-            break;
+                break;
+            }
+            else if (iterator->bytes_read == 0) {
+                break;
+            }
+            iterator->byte_pos = 0;
         }
+        direntp = (struct dirent *)(iterator->buf + iterator->byte_pos);
+        iterator->byte_pos += direntp->d_reclen;
 
         /* Skip over . and .. */
         name_len = NAMLEN(direntp);
@@ -14284,7 +14304,7 @@ static PyType_Spec ScandirIteratorType_spec = {
 /*[clinic input]
 os.scandir
 
-    path : path_t(nullable=True, allow_fd='PATH_HAVE_FDOPENDIR') = None
+    path : path_t(nullable=True, allow_fd=True) = None
 
 Return an iterator of DirEntry objects for given path.
 
@@ -14297,16 +14317,13 @@ If path is None, uses the path='.'.
 
 static PyObject *
 os_scandir_impl(PyObject *module, path_t *path)
-/*[clinic end generated code: output=6eb2668b675ca89e input=6bdd312708fc3bb0]*/
+/*[clinic end generated code: output=6eb2668b675ca89e input=5218b205d9ce8093]*/
 {
     ScandirIterator *iterator;
 #ifdef MS_WINDOWS
     wchar_t *path_strW;
 #else
     const char *path_str;
-#ifdef HAVE_FDOPENDIR
-    int fd = -1;
-#endif
 #endif
 
     if (PySys_Audit("os.scandir", "O",
@@ -14322,7 +14339,14 @@ os_scandir_impl(PyObject *module, path_t *path)
 #ifdef MS_WINDOWS
     iterator->handle = INVALID_HANDLE_VALUE;
 #else
-    iterator->dirp = NULL;
+    iterator->buf = malloc(GETDIRENTRIES_BUF_SIZE);
+    if (!iterator->buf) {
+        PyErr_SetNone(PyExc_MemoryError);
+        goto error;
+    }
+    iterator->basep = 0;
+    iterator->byte_pos = 0;
+    iterator->bytes_read = 0;
 #endif
 
     /* Move the ownership to iterator->path */
@@ -14348,22 +14372,8 @@ os_scandir_impl(PyObject *module, path_t *path)
     }
 #else /* POSIX */
     errno = 0;
-#ifdef HAVE_FDOPENDIR
     if (iterator->path.fd != -1) {
-      if (HAVE_FDOPENDIR_RUNTIME) {
-        /* closedir() closes the FD, so we duplicate it */
-        fd = _Py_dup(iterator->path.fd);
-        if (fd == -1)
-            goto error;
-
-        Py_BEGIN_ALLOW_THREADS
-        iterator->dirp = fdopendir(fd);
-        Py_END_ALLOW_THREADS
-      } else {
-        PyErr_SetString(PyExc_TypeError,
-            "scandir: path should be string, bytes, os.PathLike or None, not int");
-        return NULL;
-      }
+        iterator->fd = iterator->path.fd;
     }
     else
 #endif
@@ -14374,26 +14384,24 @@ os_scandir_impl(PyObject *module, path_t *path)
             path_str = ".";
 
         Py_BEGIN_ALLOW_THREADS
-        iterator->dirp = opendir(path_str);
+        iterator->fd = open(path_str, O_CLOEXEC|O_DIRECTORY|O_RDONLY);
         Py_END_ALLOW_THREADS
     }
 
-    if (!iterator->dirp) {
+    if (iterator->fd < 0) {
         path_error(&iterator->path);
-#ifdef HAVE_FDOPENDIR
-        if (fd != -1) {
-            Py_BEGIN_ALLOW_THREADS
-            close(fd);
-            Py_END_ALLOW_THREADS
-        }
-#endif
         goto error;
     }
-#endif
 
     return (PyObject *)iterator;
 
 error:
+#ifndef MS_WINDOWS
+    if (iterator->buf) {
+        free(iterator->buf);
+        iterator->buf = NULL;
+    }
+#endif
     Py_DECREF(iterator);
     return NULL;
 }
