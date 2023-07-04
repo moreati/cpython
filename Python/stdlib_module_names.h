@@ -55,7 +55,7 @@ static const char* _Py_stdlib_module_names[] = {
 "_posixshmem",
 "_posixsubprocess",
 "_py_abc",
-"_pydatetime",
+"_pydatetime64",
 "_pydecimal",
 "_pyio",
 "_pylong",
