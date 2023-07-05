@@ -1684,16 +1684,16 @@ class datetime(date):
     The year, month and day arguments are required. tzinfo may be None, or an
     instance of a tzinfo subclass. The remaining arguments may be ints.
     """
-    __slots__ = ('_dt', '_tzinfo', '_hashcode', '_fold')
+    __slots__ = ('_dt', '_tzinfo', '_hashcode')
 
     # 00000000 11111111 22222222 33333333 44444444 55555555 66666666 77777777
-    #     YYYY YYYYYYYY YYMMMMDD DDDhhhhh mmmmmmss ssssuuuu uuuuuuuu uuuuuuuu
+    #    fYYYY YYYYYYYY YYMMMMDD DDDhhhhh mmmmmmss ssssuuuu uuuuuuuu uuuuuuuu
 
-    # |        | Year | Mon | Day | Hour | Min | Sec | Microsec |
-    # | Min    |    1 |   1 |   1 |    0 |   0 |   0 |        0 |
-    # | Max    | 9999 |  12 |  31 |   23 |  59 |  59 |   999999 |
-    # | Width  |   14 |   4 |   5 |    5 |   6 |   6 |       20 |
-    # | Offset |   46 |  42 |  37 |   32 |  26 |  20 |        0 |
+    # |        | fold | Year | Mon | Day | Hour | Min | Sec | Microsec |
+    # | Min    |    0 |    1 |   1 |   1 |    0 |   0 |   0 |        0 |
+    # | Max    |    1 | 9999 |  12 |  31 |   23 |  59 |  59 |   999999 |
+    # | Width  |    1 |   14 |   4 |   5 |    5 |   6 |   6 |       20 |
+    # | Offset |   60 |   46 |  42 |  37 |   32 |  26 |  20 |        0 |
     _dt: int
 
     def __new__(cls, year, month=None, day=None, hour=0, minute=0, second=0,
@@ -1719,15 +1719,14 @@ class datetime(date):
             hour, minute, second, microsecond, fold)
         _check_tzinfo_arg(tzinfo)
         self = object.__new__(cls)
-        self._dt = cls._pack(year, month, day, hour, minute, second, microsecond)
+        self._dt = cls._pack(year, month, day, hour, minute, second, microsecond, fold)
         self._tzinfo = tzinfo
         self._hashcode = -1
-        self._fold = fold
         return self
 
     @staticmethod
-    def _pack(y:int, m:int, d:int, hh:int, mm:int, ss:int, us:int) -> int:
-        return y<<46 | m<<42 | d<<37 | hh<<32 | mm<<26 | ss<<20 | us
+    def _pack(y:int, m:int, d:int, hh:int, mm:int, ss:int, us:int, f:int) -> int:
+        return f<<60 | y<<46 | m<<42 | d<<37 | hh<<32 | mm<<26 | ss<<20 | us
 
     # Read-only field accessors
     @property
@@ -1769,7 +1768,7 @@ class datetime(date):
 
     @property
     def fold(self):
-        return self._fold
+        return self._dt >> 60 & 0b1
 
     @classmethod
     def _fromtimestamp(cls, t, utc, tz):
@@ -1810,7 +1809,11 @@ class datetime(date):
                 y, m, d, hh, mm, ss = converter(t + trans // timedelta(0, 1))[:6]
                 probe2 = cls(y, m, d, hh, mm, ss, us, tz)
                 if probe2 == result:
-                    result._fold = 1
+                    result = cls(
+                        result.year, result.month, result.day,
+                        result.hour, result.minute, result.second,
+                        result.microsecond, result.tzinfo, fold=1,
+                    )
         elif tz is not None:
             result = tz.fromutc(result)
         return result
@@ -2098,7 +2101,7 @@ class datetime(date):
         if self._tzinfo is not None:
             assert s[-1:] == ")"
             s = s[:-1] + ", tzinfo=%r" % self._tzinfo + ")"
-        if self._fold:
+        if self.fold:
             assert s[-1:] == ")"
             s = s[:-1] + ", fold=1)"
         return s
@@ -2212,7 +2215,11 @@ class datetime(date):
             base_compare = myoff == otoff
 
         if base_compare:
-            return _cmp(self._dt, other._dt)
+            MASK_YMD_HHMMMSS = 0x0fff_ffff_ffff_ffff
+            return _cmp(
+                self._dt & MASK_YMD_HHMMMSS,
+                other._dt & MASK_YMD_HHMMMSS,
+            )
         if myoff is None or otoff is None:
             if allow_mixed:
                 return 2 # arbitrary non-zero value
@@ -2291,7 +2298,7 @@ class datetime(date):
         us2, us3 = divmod(self.microsecond, 256)
         us1, us2 = divmod(us2, 256)
         m = self.month
-        if self._fold and protocol > 3:
+        if self.fold and protocol > 3:
             m += 128
         basestate = bytes([yhi, ylo, m, self.day,
                            self.hour, self.minute, self.second,
@@ -2307,12 +2314,12 @@ class datetime(date):
         yhi, ylo, m, d, hh, mm, ss, us1, us2, us3 = string
         y = yhi * 256 + ylo
         if m > 127:
-            self._fold = 1
+            fold = 1
             m = m - 128
         else:
-            self._fold = 0
+            fold = 0
         us = (((us1 << 8) | us2) << 8) | us3
-        self._dt = self._pack(y, m, d, hh, mm, ss, us)
+        self._dt = self._pack(y, m, d, hh, mm, ss, us, fold)
         self._tzinfo = tzinfo
 
     def __reduce_ex__(self, protocol):
