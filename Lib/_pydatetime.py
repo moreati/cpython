@@ -1100,7 +1100,7 @@ class date:
         January 1 of year 1 is day 1.  Only the year, month and day values
         contribute to the result.
         """
-        return _ymd2ord(self._year, self._month, self._day)
+        return _ymd2ord(self.year, self.month, self.day)
 
     def replace(self, year=None, month=None, day=None):
         """Return a new date with new values for the specified fields."""
@@ -1142,7 +1142,7 @@ class date:
     def _cmp(self, other):
         assert isinstance(other, date)
         y, m, d = self._year, self._month, self._day
-        y2, m2, d2 = other._year, other._month, other._day
+        y2, m2, d2 = other.year, other.month, other.day
         return _cmp((y, m, d), (y2, m2, d2))
 
     def __hash__(self):
@@ -1198,9 +1198,9 @@ class date:
         http://www.phys.uu.nl/~vgent/calendar/isocalendar.htm
         (used with permission)
         """
-        year = self._year
+        year = self.year
         week1monday = _isoweek1monday(year)
-        today = _ymd2ord(self._year, self._month, self._day)
+        today = _ymd2ord(self.year, self.month, self.day)
         # Internally, week and day have origin 0
         week, day = divmod(today - week1monday, 7)
         if week < 0:
@@ -1684,7 +1684,17 @@ class datetime(date):
     The year, month and day arguments are required. tzinfo may be None, or an
     instance of a tzinfo subclass. The remaining arguments may be ints.
     """
-    __slots__ = date.__slots__ + time.__slots__
+    __slots__ = ('_dt', '_tzinfo', '_hashcode')
+
+    # 00000000 11111111 22222222 33333333 44444444 55555555 66666666 77777777
+    #    fYYYY YYYYYYYY YYMMMMDD DDDhhhhh mmmmmmss ssssuuuu uuuuuuuu uuuuuuuu
+
+    # |        | fold | Year | Mon | Day | Hour | Min | Sec | Microsec |
+    # | Min    |    0 |    1 |   1 |   1 |    0 |   0 |   0 |        0 |
+    # | Max    |    1 | 9999 |  12 |  31 |   23 |  59 |  59 |   999999 |
+    # | Width  |    1 |   14 |   4 |   5 |    5 |   6 |   6 |       20 |
+    # | Offset |   60 |   46 |  42 |  37 |   32 |  26 |  20 |        0 |
+    _dt: int
 
     def __new__(cls, year, month=None, day=None, hour=0, minute=0, second=0,
                 microsecond=0, tzinfo=None, *, fold=0):
@@ -1709,38 +1719,47 @@ class datetime(date):
             hour, minute, second, microsecond, fold)
         _check_tzinfo_arg(tzinfo)
         self = object.__new__(cls)
-        self._year = year
-        self._month = month
-        self._day = day
-        self._hour = hour
-        self._minute = minute
-        self._second = second
-        self._microsecond = microsecond
+        self._dt = cls._pack(year, month, day, hour, minute, second, microsecond, fold)
         self._tzinfo = tzinfo
         self._hashcode = -1
-        self._fold = fold
         return self
+
+    @staticmethod
+    def _pack(y:int, m:int, d:int, hh:int, mm:int, ss:int, us:int, f:int) -> int:
+        return f<<60 | y<<46 | m<<42 | d<<37 | hh<<32 | mm<<26 | ss<<20 | us
 
     # Read-only field accessors
     @property
+    def year(self) :
+        return self._dt >> 46 & 0b00111111_11111111
+
+    @property
+    def month(self):
+        return self._dt >> 42 & 0b00000000_00001111
+
+    @property
+    def day(self):
+        return self._dt >> 37 & 0b00000000_00011111
+
+    @property
     def hour(self):
         """hour (0-23)"""
-        return self._hour
+        return self._dt >> 32 & 0b00000000_00011111
 
     @property
     def minute(self):
         """minute (0-59)"""
-        return self._minute
+        return self._dt >> 26 & 0b00000000_00111111
 
     @property
     def second(self):
         """second (0-59)"""
-        return self._second
+        return self._dt >> 20 & 0b00000000_00111111
 
     @property
     def microsecond(self):
         """microsecond (0-999999)"""
-        return self._microsecond
+        return self._dt & 0b1111_11111111_11111111
 
     @property
     def tzinfo(self):
@@ -1749,7 +1768,7 @@ class datetime(date):
 
     @property
     def fold(self):
-        return self._fold
+        return self._dt >> 60 & 0b1
 
     @classmethod
     def _fromtimestamp(cls, t, utc, tz):
@@ -1790,7 +1809,11 @@ class datetime(date):
                 y, m, d, hh, mm, ss = converter(t + trans // timedelta(0, 1))[:6]
                 probe2 = cls(y, m, d, hh, mm, ss, us, tz)
                 if probe2 == result:
-                    result._fold = 1
+                    result = cls(
+                        result.year, result.month, result.day,
+                        result.hour, result.minute, result.second,
+                        result.microsecond, result.tzinfo, fold=1,
+                    )
         elif tz is not None:
             result = tz.fromutc(result)
         return result
@@ -1947,7 +1970,7 @@ class datetime(date):
 
     def date(self):
         "Return the date part."
-        return date(self._year, self._month, self._day)
+        return date(self.year, self.month, self.day)
 
     def time(self):
         "Return the time part, with tzinfo None."
@@ -2032,10 +2055,10 @@ class datetime(date):
         weekday = self.toordinal() % 7 or 7
         return "%s %s %2d %02d:%02d:%02d %04d" % (
             _DAYNAMES[weekday],
-            _MONTHNAMES[self._month],
-            self._day,
-            self._hour, self._minute, self._second,
-            self._year)
+            _MONTHNAMES[self.month],
+            self.day,
+            self.hour, self.minute, self.second,
+            self.year)
 
     def isoformat(self, sep='T', timespec='auto'):
         """Return the time formatted according to ISO.
@@ -2053,9 +2076,9 @@ class datetime(date):
         terms of the time to include. Valid options are 'auto', 'hours',
         'minutes', 'seconds', 'milliseconds' and 'microseconds'.
         """
-        s = ("%04d-%02d-%02d%c" % (self._year, self._month, self._day, sep) +
-             _format_time(self._hour, self._minute, self._second,
-                          self._microsecond, timespec))
+        s = ("%04d-%02d-%02d%c" % (self.year, self.month, self.day, sep) +
+             _format_time(self.hour, self.minute, self.second,
+                          self.microsecond, timespec))
 
         off = self.utcoffset()
         tz = _format_offset(off)
@@ -2066,8 +2089,8 @@ class datetime(date):
 
     def __repr__(self):
         """Convert to formal string, for repr()."""
-        L = [self._year, self._month, self._day,  # These are never zero
-             self._hour, self._minute, self._second, self._microsecond]
+        L = [self.year, self.month, self.day,  # These are never zero
+             self.hour, self.minute, self.second, self.microsecond]
         if L[-1] == 0:
             del L[-1]
         if L[-1] == 0:
@@ -2078,7 +2101,7 @@ class datetime(date):
         if self._tzinfo is not None:
             assert s[-1:] == ")"
             s = s[:-1] + ", tzinfo=%r" % self._tzinfo + ")"
-        if self._fold:
+        if self.fold:
             assert s[-1:] == ")"
             s = s[:-1] + ", fold=1)"
         return s
@@ -2192,12 +2215,11 @@ class datetime(date):
             base_compare = myoff == otoff
 
         if base_compare:
-            return _cmp((self._year, self._month, self._day,
-                         self._hour, self._minute, self._second,
-                         self._microsecond),
-                        (other._year, other._month, other._day,
-                         other._hour, other._minute, other._second,
-                         other._microsecond))
+            MASK_YMD_HHMMMSS = 0x0fff_ffff_ffff_ffff
+            return _cmp(
+                self._dt & MASK_YMD_HHMMMSS,
+                other._dt & MASK_YMD_HHMMMSS,
+            )
         if myoff is None or otoff is None:
             if allow_mixed:
                 return 2 # arbitrary non-zero value
@@ -2214,10 +2236,10 @@ class datetime(date):
         if not isinstance(other, timedelta):
             return NotImplemented
         delta = timedelta(self.toordinal(),
-                          hours=self._hour,
-                          minutes=self._minute,
-                          seconds=self._second,
-                          microseconds=self._microsecond)
+                          hours=self.hour,
+                          minutes=self.minute,
+                          seconds=self.second,
+                          microseconds=self.microsecond)
         delta += other
         hour, rem = divmod(delta.seconds, 3600)
         minute, second = divmod(rem, 60)
@@ -2239,11 +2261,11 @@ class datetime(date):
 
         days1 = self.toordinal()
         days2 = other.toordinal()
-        secs1 = self._second + self._minute * 60 + self._hour * 3600
-        secs2 = other._second + other._minute * 60 + other._hour * 3600
+        secs1 = self.second + self.minute * 60 + self.hour * 3600
+        secs2 = other.second + other.minute * 60 + other.hour * 3600
         base = timedelta(days1 - days2,
                          secs1 - secs2,
-                         self._microsecond - other._microsecond)
+                         self.microsecond - other.microsecond)
         if self._tzinfo is other._tzinfo:
             return base
         myoff = self.utcoffset()
@@ -2272,14 +2294,14 @@ class datetime(date):
     # Pickle support.
 
     def _getstate(self, protocol=3):
-        yhi, ylo = divmod(self._year, 256)
-        us2, us3 = divmod(self._microsecond, 256)
+        yhi, ylo = divmod(self.year, 256)
+        us2, us3 = divmod(self.microsecond, 256)
         us1, us2 = divmod(us2, 256)
-        m = self._month
-        if self._fold and protocol > 3:
+        m = self.month
+        if self.fold and protocol > 3:
             m += 128
-        basestate = bytes([yhi, ylo, m, self._day,
-                           self._hour, self._minute, self._second,
+        basestate = bytes([yhi, ylo, m, self.day,
+                           self.hour, self.minute, self.second,
                            us1, us2, us3])
         if self._tzinfo is None:
             return (basestate,)
@@ -2289,16 +2311,15 @@ class datetime(date):
     def __setstate(self, string, tzinfo):
         if tzinfo is not None and not isinstance(tzinfo, _tzinfo_class):
             raise TypeError("bad tzinfo state arg")
-        (yhi, ylo, m, self._day, self._hour,
-         self._minute, self._second, us1, us2, us3) = string
+        yhi, ylo, m, d, hh, mm, ss, us1, us2, us3 = string
+        y = yhi * 256 + ylo
         if m > 127:
-            self._fold = 1
-            self._month = m - 128
+            fold = 1
+            m = m - 128
         else:
-            self._fold = 0
-            self._month = m
-        self._year = yhi * 256 + ylo
-        self._microsecond = (((us1 << 8) | us2) << 8) | us3
+            fold = 0
+        us = (((us1 << 8) | us2) << 8) | us3
+        self._dt = self._pack(y, m, d, hh, mm, ss, us, fold)
         self._tzinfo = tzinfo
 
     def __reduce_ex__(self, protocol):

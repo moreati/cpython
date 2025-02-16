@@ -9,11 +9,11 @@ TESTS = 'test.datetimetester'
 def load_tests(loader, tests, pattern):
     try:
         pure_tests = import_fresh_module(TESTS,
-                                         fresh=['datetime', '_pydatetime64', '_strptime'],
+                                         fresh=['datetime', '_pydatetime', '_strptime'],
                                          blocked=['_datetime'])
         fast_tests = import_fresh_module(TESTS,
                                          fresh=['datetime', '_strptime'],
-                                         blocked=['_pydatetime64'])
+                                         blocked=['_pydatetime'])
     finally:
         # XXX: import_fresh_module() is supposed to leave sys.module cache untouched,
         # XXX: but it does not, so we have to cleanup ourselves.
@@ -44,8 +44,8 @@ def load_tests(loader, tests, pattern):
                 cls_._save_sys_modules = sys.modules.copy()
                 sys.modules[TESTS] = module
                 sys.modules['datetime'] = module.datetime_module
-                if hasattr(module, '_pydatetime64'):
-                    sys.modules['_pydatetime64'] = module._pydatetime64
+                if hasattr(module, '_pydatetime'):
+                    sys.modules['_pydatetime'] = module._pydatetime
                 sys.modules['_strptime'] = module._strptime
             @classmethod
             def tearDownClass(cls_):

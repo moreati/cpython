@@ -41,7 +41,7 @@ except ImportError:
 # Needed by test_datetime
 import _strptime
 try:
-    import _pydatetime64
+    import _pydatetime
 except ImportError:
     pass
 #
@@ -98,7 +98,7 @@ class TestModule(unittest.TestCase):
         if '_Fast' in self.__class__.__name__:
             self.skipTest('Only run for Pure Python implementation')
 
-        dar = _pydatetime64._divide_and_round
+        dar = _pydatetime._divide_and_round
 
         self.assertEqual(dar(-10, -3), 3)
         self.assertEqual(dar(5, -2), -2)
